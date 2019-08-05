@@ -1,2 +1,2 @@
-# Master thesis
+Master thesis
 # Homomorphoc Encryption
