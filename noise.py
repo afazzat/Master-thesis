@@ -206,4 +206,4 @@ ct3 = ctxt(2, ctxt.variance(), msg)
 ct = [ct1, ct2, ct3, ct1, ct2, ct3, ct2, ct3, ct1, ct3]
 print(ctxt.mult_many(ct, rlkey, r).var)
 
-#print(LWE_Estimator.read())
+#print(LWE_Estimator.read()) 
