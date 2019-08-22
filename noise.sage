@@ -311,9 +311,82 @@ def NoiseGaussianWidth(n,security_reduction):
     else:
         return 8/math.sqrt(2*math.pi)     #Peikert
                      
+def mult_many_naif(self, rlk, r, params):
+
+        res = self[0]
+
+        for i in range(1,len(self)):
+            res = ctxt.mult(res, self[i], rlk, r)
+            res.msg.norm = int(res.msg.norm % params['t'])
+
+        if ctxt.is_valide(res, params):
+            return res
+    
+        print("Circuit not handeled, decryption failure")
+        print("Generating new parameters...")
+        nq = MinCorrectModulus(res)
+        print(log2(nq))
+        return res
+
+    #variance formula
+def mult_many(args, rlk, r, params):
+
+        res = ctxt(d=0, var=0, msg = poly(1,1)) #initialisation of the destination
+        k = len(args) #number of inputs
+        N = [None]*k 
+
+        for i in range(k):
+            N[i] = (args[i].msg).d * (args[i].msg).norm # N_i = ||m_i||_2
+        alpha = r.norm # exception alpha = Var(r)
+
+        tmp1 = 1
+        for i in range(2,k):
+            tmp1 *= (N[i] + alpha)
+        var0 = (N[1] + alpha) * tmp1 * args[0].var
+        var1 = (N[0] + alpha) * tmp1 * args[1].var
+
+        var = [0]*(k-1); tmp3 = 1; tmp4 = 1
+
+        for j in range(2, k-1):
+            for i in range(j+1, k):
+                tmp3 *= (N[i] + alpha)
+
+            for l in range(0, j):
+                tmp4 *= N[l]
+
+            var[j] = tmp3 * (tmp4 + alpha) * args[j].var
+            tmp3 = 1; tmp4 = 1
+
+        tmp5 = 1
+        #product of plain messages correponds to the decryption of the mult before
+        #compute mod t 
+        if k > 2:
+            for i in range(k-1):# ok
+                tmp5 *= N[i]
+            vark = (int(tmp5%params['t']) + alpha)*args[k-1].var
+        #for one mult we only keep the first two terms
+        else: vark = 0
+
+
+        res.var = var0 + var1 + sum(var[j] for j in range(k-1)) + vark
+
+        res.msg = args[0].msg
+        for i in range(1,k):
+            res.msg = poly.mult(res.msg, args[i].msg)
+            res.msg.norm = int(res.msg.norm % params['t'])
+        for i in range(k):
+            res = ctxt.relin(res, rlk)
+
+        if ctxt.is_valide(res, params):
+            return res
+        print("Circuit not handeled, decryption failure")
+        print("Generating new parameters...")
+        nq = MinCorrectModulus(res)
+        print(log2(nq))
+        return res
 #main
 log2_epsilon = 64 
-rlkey = ctxt(2, None, None)
+rlkey = ctxt(2, params['sigma'], None)
 r_var = params['n'] * params['h'] * params['t'] / 12 #params['t']*params['delta_r']//2 + 2*params['t'] 
 res = ctxt(d = 0, var = 0, msg = poly(d = 0, norm = 0))
 r = poly(d = 1, norm = r_var) 
@@ -321,9 +394,10 @@ msg = poly(d = params['n']/2, norm = params['t'] -1)
 #msg2 = poly(d = params['n']//2, norm = params['t'] -1)
 ct1 = ctxt(2, variance(), poly(d = params['n']//2, norm = params['t'] -1))
 ct2 = ctxt(2, variance(), poly(d = params['n']//2, norm = params['t'] -1))
+ct = [ct1,ct2,ct1,ct1,ct2,ct1,ct2]
 
-
-print("variance=",ctxt.mult(ct1,ctxt.mult(ct1,ctxt.mult(ct1,ctxt.mult(ct1,ct2, rlkey, r, params), rlkey, r, params), rlkey, r, params), rlkey, r, params).var,"q=", log2(params['q']),"n=",params['n'])
+#print("variance=",ctxt.mult(ct1,ctxt.mult(ct1,ctxt.mult(ct1,ctxt.mult(ct1,ct2, rlkey, r, params), rlkey, r, params), rlkey, r, params), rlkey, r, params).var,"q=", log2(params['q']),"n=",params['n'])
+print("variance=",mult_many(ct, rlkey, r, params).var,"q=", log2(params['q']),"n=",params['n'])
 n=params['n']
 q=params['q']
 dbc=60
