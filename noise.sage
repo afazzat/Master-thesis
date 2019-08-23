@@ -9,7 +9,7 @@ from functools import reduce
 load('https://bitbucket.org/malb/lwe-estimator/raw/HEAD/estimator.py')
 
 #Initial parameters
-params = {'n':4096,'sigma':3.19,'_lambda': 80,'t':65537,'q':None, 
+params = {'n':2048,'sigma':3.19,'_lambda': 80,'t':65537,'q':None, 
             'h':64, 'ell': None, 'T': 2**32, 'delta_r': None}
 params['q'] = 2**64 # q = size(n) ciphertext modulus
 params['ell'] = math.ceil(math.log(params['q'],params['T'])) # 
@@ -26,7 +26,7 @@ def failure_proba(x, sigma, k): #P(|x| > k*sigma)
     return erfc(k/math.sqrt(2))
 
 #variance of fresh ciphertexts
-def variance():
+def variance(params):
     return (1 + 2*params['n']/3 + params['h']) * (NoiseGaussianWidth(params['n'], 
                                                         security_reduction=False)**2)
 # log(x)/log(2)
@@ -40,7 +40,6 @@ def max_dec_noise(params):
 - Bound on error distribution: B_err = 10*sigma , to be statistically
 indistinguishable, with a probability 2^(-64) from a discrete Gaussian distribution
 with noise Gaussian width sigma.
-
 - 
 """
 
@@ -168,103 +167,9 @@ class ctxt(object):
             res = ctxt.add(res, ctxt.mult_plain(rlk, c2, params), rlk, p, params)
         return res
 
-    #ct_f=FV.Mult(ct_1,FV.Mult(ct_2,FV.Mult(...,FV.Mult(ct_k,ct_k+1))))
-    def mult_many_naif(self, rlk, r, params):
-
-        res = self[0]
-
-        for i in range(1,len(self)):
-            res = ctxt.mult(res, self[i], rlk, r)
-            res.msg.norm = int(res.msg.norm % params['t'])
-
-        if ctxt.is_valide(res, params):
-            return res
-    
-        print("Circuit not handeled, decryption failure")
-        print("Generating new parameters...")
-        nq = MinCorrectModulus(res)
-        print(log2(nq))
-        return res
-
-    #variance formula
-    def mult_many(self, rlk, r, params):
-
-        res = ctxt(d=0, var=0, msg = poly(1,1)) #initialisation of the destination
-        k = len(self) #number of inputs
-        N = [None]*k 
-
-        for i in range(k):
-            N[i] = (self[i].msg).d * (self[i].msg).norm # N_i = ||m_i||_2
-        alpha = r.norm # exception alpha = Var(r)
-
-        tmp1 = 1
-        for i in range(2,k):
-            tmp1 *= (N[i] + alpha)
-        var0 = (N[1] + alpha) * tmp1 * self[0].var
-        var1 = (N[0] + alpha) * tmp1 * self[1].var
-
-        var = [0]*(k-1); tmp3 = 1; tmp4 = 1
-
-        for j in range(2, k-1):
-            for i in range(j+1, k):
-                tmp3 *= (N[i] + alpha)
-
-            for l in range(0, j):
-                tmp4 *= N[l]
-
-            var[j] = tmp3 * (tmp4 + alpha) * self[j].var
-            tmp3 = 1; tmp4 = 1
-
-        tmp5 = 1
-        #product of plain messages correponds to the decryption of the mult before
-        #compute mod t 
-        if k > 2:
-            for i in range(k-1):# ok
-                tmp5 *= N[i]
-            vark = (int(tmp5%params['t']) + alpha)*self[k-1].var
-        #for one mult we only keep the first two terms
-        else: vark = 0
-
-
-        res.var = var0 + var1 + sum(var[j] for j in range(k-1)) + vark
-
-        res.msg = self[0].msg
-        for i in range(1,k):
-            res.msg = poly.mult(res.msg, self[i].msg)
-            res.msg.norm = int(res.msg.norm % params['t'])
-        for i in range(k):
-            res = ctxt.relin(res, rlk)
-
-        if ctxt.is_valide(res, params):
-            return res
-    
-        print("Circuit not handeled, decryption failure")
-        print("Generating new parameters...")
-        nq = MinCorrectModulus(res)
-        print(log2(nq))
-        return res
 
     def exponontiate(self, rlk, r):
         return ctxt.mult(self, self, rlk, r)
-
-    def comb(self, rlk, r, k,params):
-        res = self[0]
-        circ = gen_random_circuit(k-1)
-        #print(circ)
-        tmp = []
-    
-        for i in range(1,len(self)):
-            res = circ[i-1](res, self[i], rlk, r)
-
-        if ctxt.is_valide(res, params):
-            return res
-        
-        print("Circuit not handeled, decryption failure")
-        print("Generating new parameters...")
-        nq = MinCorrectModulus(res)
-        print(log2(nq))
-                
-        return res
 
     #condition for correctness 
     def is_valide(self, params):
@@ -278,7 +183,7 @@ def gen_random_circuit(k):
     circuit = [None]*k
     #random.seed(42)
     for i in range(k):
-        circuit[i] = operations[0]#random.choice(operations)
+        circuit[i] = random.choice(operations)
     
     #print(circuit)
     return circuit
@@ -290,33 +195,24 @@ def gen_inputs(k):
     msg = poly(d = params['n']//2, norm = params['t'] -1)
 
     for i in range(k):
-        inputs[i] = ctxt(2, variance(), msg)
+        inputs[i] = ctxt(2, variance(params), msg)
 
     return inputs
     
-#Generate a set of params then check correctness and security level using albrecht's primal_usvp(LWE-Estimator)
-def MinCorrectModulus(circuit):
-    q = params['q']
-    new_params = {'n':params['n'], 'q': q, 't':params['t']}
-    while ctxt.is_valide(circuit, new_params) == False:
-        q <<= 2
-        new_params['q'] = q
-    q >>= 2
-    params['q'] = q
-    return q
 
 def NoiseGaussianWidth(n,security_reduction):
     if security_reduction:
         return 2*math.sqrt(n)        #Regev     
     else:
         return 8/math.sqrt(2*math.pi)     #Peikert
-                     
-def mult_many_naif(self, rlk, r, params):
 
-        res = self[0]
+#ct_f=FV.Mult(ct_1,FV.Mult(ct_2,FV.Mult(...,FV.Mult(ct_k,ct_k+1))))      
+def mult_many_naif(args, rlk, r, params):
 
-        for i in range(1,len(self)):
-            res = ctxt.mult(res, self[i], rlk, r)
+        res = args[0]
+
+        for i in range(1,len(args)):
+            res = ctxt.mult(res, args[i], rlk, r, params)
             res.msg.norm = int(res.msg.norm % params['t'])
 
         if ctxt.is_valide(res, params):
@@ -325,10 +221,10 @@ def mult_many_naif(self, rlk, r, params):
         print("Circuit not handeled, decryption failure")
         print("Generating new parameters...")
         nq = MinCorrectModulus(res)
-        print(log2(nq))
+        print("q=",log2(nq))
         return res
 
-    #variance formula
+#variance formula
 def mult_many(args, rlk, r, params):
 
         res = ctxt(d=0, var=0, msg = poly(1,1)) #initialisation of the destination
@@ -382,22 +278,57 @@ def mult_many(args, rlk, r, params):
         print("Circuit not handeled, decryption failure")
         print("Generating new parameters...")
         nq = MinCorrectModulus(res)
-        print(log2(nq))
+        print("q=",log2(nq))
         return res
+
+#Random circuit with mults and adds
+def comb(args, rlk, r,params):
+        res = args[0]
+        circ = gen_random_circuit(len(args)-1)
+        print(circ)
+    
+        for i in range(1,len(args)):
+            res = circ[i-1](res, args[i], rlk, r, params)
+
+        if ctxt.is_valide(res, params):
+            return res
+        
+        print("Circuit not handeled, decryption failure")
+        print("Generating new parameters...")
+        nq = MinCorrectModulus(res)
+        print(log2(nq))
+                
+        return res
+#Generate a set of params then check correctness and security level using albrecht's primal_usvp(LWE-Estimator)
+def gen_params()
+#minimal ciphertext space modulus for correctness
+def MinCorrectModulus(circuit):
+    q = params['q']
+    Delta = floor(q/t)
+    first_pass = False 
+    new_params = {'n':params['n'], 'q': q, 't':params['t']}
+    while ctxt.is_valide(circuit, new_params) == False:
+        q <<= 2
+        new_params['q'] = q
+    q >>= 2
+    params['q'] = q
+    return q
 #main
-log2_epsilon = 64 
+log2_epsilon = 64
 rlkey = ctxt(2, params['sigma'], None)
 r_var = params['n'] * params['h'] * params['t'] / 12 #params['t']*params['delta_r']//2 + 2*params['t'] 
 res = ctxt(d = 0, var = 0, msg = poly(d = 0, norm = 0))
 r = poly(d = 1, norm = r_var) 
-msg = poly(d = params['n']/2, norm = params['t'] -1)
+msg = poly(d = params['n']/2, norm = params['t'] -1) # Uniform from {0,1}?
 #msg2 = poly(d = params['n']//2, norm = params['t'] -1)
-ct1 = ctxt(2, variance(), poly(d = params['n']//2, norm = params['t'] -1))
-ct2 = ctxt(2, variance(), poly(d = params['n']//2, norm = params['t'] -1))
-ct = [ct1,ct2,ct1,ct1,ct2,ct1,ct2]
+ct1 = ctxt(2, variance(params), poly(d = params['n']//2, norm = params['t'] -1))
+ct2 = ctxt(2, variance(params), poly(d = params['n']//2, norm = params['t'] -1))
 
+k=4
+ct = [ct1]*k
 #print("variance=",ctxt.mult(ct1,ctxt.mult(ct1,ctxt.mult(ct1,ctxt.mult(ct1,ct2, rlkey, r, params), rlkey, r, params), rlkey, r, params), rlkey, r, params).var,"q=", log2(params['q']),"n=",params['n'])
-print("variance=",mult_many(ct, rlkey, r, params).var,"q=", log2(params['q']),"n=",params['n'])
+
+print("variance=",mult_many_naif(ct, rlkey, r, params).var,"q=", log2(params['q']),"n=",params['n'])
 n=params['n']
 q=params['q']
 dbc=60
@@ -433,3 +364,5 @@ def MinSecureDegree(q,min_secu_level,prv_key_distr,current_model,security_reduct
     return n,estimated_secu_level,noise_rate
 
 print(MinSecureDegree(params['q'],min_secu_level,prv_key_distr,current_model,False,dbc))
+
+
