@@ -9,7 +9,7 @@ from functools import reduce
 load('https://bitbucket.org/malb/lwe-estimator/raw/HEAD/estimator.py')
 
 #Initial parameters
-params = {'n':2048,'sigma':3.19,'_lambda': 80,'t':65537,'q':None, 
+params = {'n':1024,'sigma':3.19,'_lambda': 80,'t':65537,'q':None, 
             'h':64, 'ell': None, 'T': 2**32, 'delta_r': None}
 params['q'] = 2**64 # q = size(n) ciphertext modulus
 params['ell'] = math.ceil(math.log(params['q'],params['T'])) # 
@@ -145,7 +145,7 @@ class ctxt(object):
             return res
     
         print("Circuit not handeled, decryption failure")
-        print("Generating new parameters...")
+        print("Generating new parameters...")('q=', 72.0)
         nq = MinCorrectModulus(res)
         print(log2(nq))
         return res
@@ -175,7 +175,7 @@ class ctxt(object):
     def is_valide(self, params):
         if comp_beta(log2_epsilon) * math.sqrt(self.var) < max_dec_noise(params):
             return True
-        else: return False
+        return False
 
 #generate random circuit of length k
 def gen_random_circuit(k): 
@@ -300,10 +300,46 @@ def comb(args, rlk, r,params):
                 
         return res
 #Generate a set of params then check correctness and security level using albrecht's primal_usvp(LWE-Estimator)
-def gen_params()
+
+def gen_params(circuit,method, min_secu_level, beta, security_reduction, current_model, prv_key_distr):
+    first_pass = True
+    if method == "min_modulus":
+        n=params['n']
+        while first_pass or (estimated_secu_level<min_secu_level):
+            first_pass = False
+            q = params['q']
+            noise_Gaussian_width=NoiseGaussianWidth(n,security_reduction)
+            q = MinCorrectModulus(circuit)
+            alpha = noise_Gaussian_width/RR(q)
+            l = floor(math.log(q,params['T']), bits=1000)
+            nr_samples = (l+2)*n
+            estimated_secu_level = SecurityLevel(n,q,alpha,nr_samples, current_model,prv_key_distr)
+            n <<=1
+        n >>=1
+    elif method == "min_degree":
+        q = params['q']
+        while first_pass or  (ctxt.is_valide(circuit, new_params) == False):
+            first_pass = False
+            new_params = {'n':params['n'], 'q': q, 't': params['t']}
+            n,estimated_secu_level,alpha = MinSecureDegree(q,min_secu_level,prv_key_distr,current_model,security_reduction)
+            Delta = floor(q/params['t'])
+            l = floor(math.log(q,params['T']), bits=1000)                           
+            noise_Gaussian_width=NoiseGaussianWidth(n,security_reduction)
+            
+            alpha = noise_Gaussian_width/RR(q)
+            params['sigma'] = alpha*q
+            q <<=2
+            circuit = mult_many_naif(ct, rlkey, r, new_params)
+            print(params['q'],params['n'])
+            print(new_params['q'], new_params['n'])
+        q >>= 2
+    nr_samples = nr_samples = (l+2)*n
+    return n,(estimated_secu_level,floor(log(q,2), bits=1000)), alpha,nr_samples 
+
 #minimal ciphertext space modulus for correctness
 def MinCorrectModulus(circuit):
     q = params['q']
+    t = params['t']
     Delta = floor(q/t)
     first_pass = False 
     new_params = {'n':params['n'], 'q': q, 't':params['t']}
@@ -313,6 +349,29 @@ def MinCorrectModulus(circuit):
     q >>= 2
     params['q'] = q
     return q
+
+#security level
+def SecurityLevel(n,q,alpha,nr_samples, current_model,prv_key_distr):
+        ring_operations=primal_usvp(n, alpha, q, prv_key_distr, m=nr_samples, success_probability=0.99,reduction_cost_model=current_model)["rop"] 
+        #success_probability for the primal uSVP attack  
+        secu_level= floor(log(ring_operations)/log(2))
+        return secu_level 
+
+#minimal degree n for security
+def MinSecureDegree(q,min_secu_level,prv_key_distr,current_model,security_reduction):
+    n = 1024
+    first_pass = True
+    while first_pass or (estimated_secu_level<min_secu_level):
+            first_pass=False
+            alpha = NoiseGaussianWidth(n,security_reduction)/RR(q)
+            l = floor(log(q,params['T']), bits=1000)
+            nr_samples = (l+2)*n
+            estimated_secu_level = SecurityLevel(n,q,alpha,nr_samples,current_model,prv_key_distr=prv_key_distr)
+            n *= 2
+    n /= 2
+    return n,estimated_secu_level,alpha
+
+
 #main
 log2_epsilon = 64
 rlkey = ctxt(2, params['sigma'], None)
@@ -326,43 +385,21 @@ ct2 = ctxt(2, variance(params), poly(d = params['n']//2, norm = params['t'] -1))
 
 k=4
 ct = [ct1]*k
-#print("variance=",ctxt.mult(ct1,ctxt.mult(ct1,ctxt.mult(ct1,ctxt.mult(ct1,ct2, rlkey, r, params), rlkey, r, params), rlkey, r, params), rlkey, r, params).var,"q=", log2(params['q']),"n=",params['n'])
 
 print("variance=",mult_many_naif(ct, rlkey, r, params).var,"q=", log2(params['q']),"n=",params['n'])
+
 n=params['n']
 q=params['q']
-dbc=60
 alpha=NoiseGaussianWidth(n,False)/q
-l = floor(log(q)/(log(2)*dbc), bits=1000)
+l = floor(log(q, params['T']), bits=1000)
 nr_samples= (l+2)*n
 prv_key_distr=(-1,1)
-# alpha = sigma/q  
+
 # SEAL_BFV
 current_model=BKZ.sieve
-
-def SecurityLevel(n,q,alpha,nr_samples, current_model,prv_key_distr):
-        ring_operations=primal_usvp(n, alpha, q, prv_key_distr, m=nr_samples, success_probability=0.99,reduction_cost_model=current_model)["rop"] 
-        #success_probability for the primal uSVP attack  
-        secu_level= floor(log(ring_operations)/log(2))
-        return secu_level    
 
 print(SecurityLevel(n,q,alpha,nr_samples, current_model,prv_key_distr))
 
 min_secu_level = params['_lambda']
-
-def MinSecureDegree(q,min_secu_level,prv_key_distr,current_model,security_reduction,dbc=None):
-    n = 1024
-    first_pass = True
-    while first_pass or (estimated_secu_level<min_secu_level):
-            first_pass=False
-            noise_rate = NoiseGaussianWidth(n,security_reduction)/RR(q)
-            l = floor(log(q)/(log(2)*dbc), bits=1000)
-            nr_samples = (l+2)*n
-            estimated_secu_level = SecurityLevel(n,q,noise_rate,nr_samples,current_model,prv_key_distr=prv_key_distr)
-            n *= 2
-    n /= 2
-    return n,estimated_secu_level,noise_rate
-
-print(MinSecureDegree(params['q'],min_secu_level,prv_key_distr,current_model,False,dbc))
-
-
+beta = comp_beta(log2_epsilon)
+print(MinSecureDegree(params['q'],min_secu_level,prv_key_distr,current_model,False))
